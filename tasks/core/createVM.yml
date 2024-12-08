@@ -1,0 +1,146 @@
+    - name: Print the clone_vmid for debugging
+      ansible.builtin.debug:
+        msg: "The clone_vmid for host {{ host }} is {{ clone_vmid }}"
+
+    - name: Sanitize the VM name by replacing spaces with hyphens
+      set_fact:
+        sanitized_vm_name: "{{ new_vm_name | replace(' ', '-') }}"
+
+    - name: Execute the clone script
+      ansible.builtin.shell: |
+        qm clone {{ clone_vmid }} {{ new_vm_id }} --name "{{ sanitized_vm_name }}" --full --storage "{{ storage_type }}"
+      args:
+        executable: /bin/bash
+
+    - name: Set VM resources
+      ansible.builtin.command:
+        cmd: |
+          qm set {{ new_vm_id }} --cores {{ vm_cores }} --memory {{ vm_memory }}                              
+
+    - name: Write SSH Key to Temporary File
+      ansible.builtin.copy:
+        dest: "/tmp/sshkey_{{ new_vm_id }}.pub"
+        content: "{{ sshkey }}"
+        mode: '0644'
+
+    - name: Configure Cloud-Init User and SSH Key
+      ansible.builtin.command:
+        cmd: >
+          qm set {{ new_vm_id }}
+          --ciuser {{ ci_user }}
+          --cipassword {{ ci_password }}
+          --sshkeys /tmp/sshkey_{{ new_vm_id }}.pub       
+                       
+    - name: Write the Cloud-Init Network Script to a File
+      ansible.builtin.copy:
+        dest: /tmp/configure_network.sh
+        content: |
+          #!/bin/bash
+
+          # Check if Ip_address is defined
+          if [ -n "{{ ip_address | default('') }}" ]; then
+            # Use static IP configuration
+            qm set "{{ new_vm_id }}" --ipconfig0 "ip={{ ip_address }}/24,gw={{ gateway | default('') }}" --nameserver 10.0.90.202
+          else
+            # Use DHCP configuration
+            qm set "{{ new_vm_id }}" --ipconfig0 "ip=dhcp" --nameserver 10.0.90.202
+          fi          
+        mode: '0755'
+
+    - name: Execute the Cloud-Init Network Script
+      ansible.builtin.shell: /tmp/configure_network.sh
+      args:
+        executable: /bin/bash
+
+    - name: Remove the Cloud-Init Network Script
+      ansible.builtin.file:
+        path: /tmp/configure_network.sh
+        state: absent
+
+
+    - name: Enable QEMU Guest Agent in Proxmox
+      ansible.builtin.command:
+        cmd: |
+          qm set {{ new_vm_id }} --agent 1      
+
+    - name: Start the VM
+      ansible.builtin.command:
+        cmd: |
+          qm start {{ new_vm_id }}          
+
+    - name: Wait for 60 seconds to ensure the VM is up
+      ansible.builtin.wait_for:
+        timeout: 60
+
+    - name: Ensure 'expect' is installed
+      ansible.builtin.package:
+        name: expect
+        state: present
+
+    - name: Write Unified Expect Script for Proxmox VM Setup and Fetching IP Address
+      ansible.builtin.copy:
+        dest: /tmp/proxmox_vm_setup_and_fetch_ip.exp
+        content: |
+          #!/usr/bin/expect -f
+          set timeout 90
+          log_file /tmp/proxmox_vm_setup_debug.log
+          spawn qm terminal {{ new_vm_id }}
+          sleep 5
+          send "\r"
+          # Handle login
+          expect {
+              "login:" { send "{{ ci_user }}\r"; exp_continue }
+              "Password:" { send "{{ ci_password }}\r"; exp_continue }
+              "$ " { }
+              timeout { puts "ERROR: Login prompt not found"; exit 1 }
+          }
+          # Add the ansible user with sudo privileges
+          send "sudo adduser {{ ansibleUser_name }} --disabled-password --gecos \"\"\r"
+          expect "$ "
+          send "echo '{{ ansibleUser_name }}:{{ lookup('env', 'ansibleUser_password') }}' | sudo chpasswd\r"
+          expect "$ "
+          send "sudo usermod -aG sudo {{ ansibleUser_name }}\r"
+          expect "$ "
+          # Allow ansible user to run sudo without a password
+          send "echo '{{ ansibleUser_name }} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/{{ ansibleUser_name }}\r"
+          expect "$ "
+          # Replace "PasswordAuthentication no" with "PasswordAuthentication yes"
+          send "sudo sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config.d/60-cloudimg-settings.conf\r"
+          expect "$ "
+          # Restart SSH service
+          send "sudo systemctl restart ssh\r"
+          expect "$ "
+          # Fetch the IP address
+          send "hostname -I\r"
+          expect -re {(\d+\.\d+\.\d+\.\d+)}
+          set ip_address $expect_out(1,string)
+          puts "Extracted IP Address: $ip_address"
+          # Exit the session
+          send "exit\r"
+          expect eof
+        mode: '0755'
+
+    - name: Run Expect Script
+      ansible.builtin.command: /tmp/proxmox_vm_setup_and_fetch_ip.exp
+      register: vm_ip_output
+
+    - name: Extract IP Address from Expect Script Output
+      ansible.builtin.set_fact:
+        vm_ip: "{{ vm_ip_output.stdout | regex_search('\\d+\\.\\d+\\.\\d+\\.\\d+') }}"
+
+    - name: Debug Extracted IP
+      ansible.builtin.debug:
+        msg: "The extracted IP address is {{ vm_ip }}"
+
+    - name: Print the clone_vmid for debugging
+      ansible.builtin.debug:
+        msg: "The clone_vmid for host {{ host }} is {{ clone_vmid }}"
+
+        
+    - name: Add new VM to the inventory group [vm]
+      add_host:
+        name: "{{ vm_ip }}"
+        groups: vm
+        ansible_user: ansible
+        ansible_ssh_private_key_file: "../key"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"

@@ -1,0 +1,61 @@
+    - name: Add SSH Key to the ansible User on the VM
+      ansible.builtin.shell: |
+        mkdir -p /home/ansible/.ssh
+        echo "{{ sshkey }}" >> /home/ansible/.ssh/authorized_keys
+        chown -R ansible:ansible /home/ansible/.ssh
+        chmod 700 /home/ansible/.ssh
+        chmod 600 /home/ansible/.ssh/authorized_keys
+      vars:
+        ansible_ssh_user: "{{ ansibleUser_name }}"
+        ansible_ssh_pass: "{{ lookup('env', 'ansibleUser_password') }}"        
+        ansible_connection: ssh
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    
+    - name: Set the SSH private key dynamically
+      set_fact:
+        ansible_ssh_private_key_file: "../key"
+
+    - name: Revert PasswordAuthentication to 'no'
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
+        regexp: '^PasswordAuthentication yes'
+        line: 'PasswordAuthentication no'
+        state: present
+      become: true
+      vars:
+        ansible_ssh_user: "{{ ansibleUser_name }}"
+        ansible_become_pass: "{{ lookup('env', 'ansibleUser_password') }}"
+        ansible_connection: ssh
+        ansible_ssh_private_key_file: "../key"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+
+    - name: Ensure software-properties-common is installed
+      ansible.builtin.apt:
+        name: software-properties-common
+        state: present
+
+    - name: Install qemu-guest-agent
+      ansible.builtin.shell: apt update && apt -y install qemu-guest-agent
+      become: yes
+
+
+    - name: Enable QEMU Guest Agent
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        enabled: yes
+        state: started
+      become: yes
+
+
+    - name: Restart SSH service after configuration change
+      ansible.builtin.shell: |
+        sudo systemctl restart ssh
+      become: true
+      vars:
+        ansible_ssh_user: "{{ ansibleUser_name }}"
+        ansible_ssh_private_key_file: "../key"
+        ansible_connection: ssh
+        ansible_become_pass: "{{ lookup('env', 'ansibleUser_password') }}"
+        ansible_ssh_private_key_file: "../key"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"

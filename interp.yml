@@ -1,0 +1,22 @@
+---
+- name: Check Python Interpreter and Location
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Print Python Interpreter Path
+      ansible.builtin.command:
+        cmd: "python3 -c 'import sys; print(sys.executable)'"
+      register: python_executable
+
+    - name: Show Python Executable Path
+      ansible.builtin.debug:
+        msg: "Python interpreter being used: {{ python_executable.stdout }}"
+
+    - name: Print Python Version
+      ansible.builtin.command:
+        cmd: "python3 -c 'import sys; print(sys.version)'"
+      register: python_version
+
+    - name: Show Python Version
+      ansible.builtin.debug:
+        msg: "Python version: {{ python_version.stdout }}"
