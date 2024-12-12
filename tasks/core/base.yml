@@ -28,6 +28,19 @@
         ansible_connection: ssh
         ansible_ssh_private_key_file: "../key"
         ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+
+    - name: Wait for apt lock to be released
+      ansible.builtin.shell: |
+        while fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+          echo "Waiting for apt lock to be released..."
+          sleep 2
+        done
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for dpkg lock to be released..."
+          sleep 2
+        done
+      become: yes
         
     - name: Install qemu-guest-agent
       ansible.builtin.apt:
