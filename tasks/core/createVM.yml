@@ -89,7 +89,7 @@
         dest: /tmp/proxmox_vm_setup_and_fetch_ip.exp
         content: |
           #!/usr/bin/expect -f
-          set timeout 90
+          set timeout 50
           log_file /tmp/proxmox_vm_setup_debug.log
           spawn qm terminal {{ new_vm_id }}
           sleep 5
