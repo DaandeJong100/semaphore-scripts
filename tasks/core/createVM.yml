@@ -22,29 +22,36 @@
         dest: "/tmp/sshkey_{{ new_vm_id }}.pub"
         content: "{{ sshkey }}"
         mode: '0644'
-
+    
+    - name: Append Additional User Public Key to SSH Key File
+      ansible.builtin.lineinfile:
+        path: "/tmp/sshkey_{{ new_vm_id }}.pub"
+        line: "{{ user_public_key }}"
+        state: present
+        create: yes
+    
     - name: Configure Cloud-Init User and SSH Key
       ansible.builtin.command:
         cmd: >
           qm set {{ new_vm_id }}
           --ciuser {{ ci_user }}
           --cipassword {{ ci_password }}
-          --sshkeys /tmp/sshkey_{{ new_vm_id }}.pub       
+          --sshkeys /tmp/sshkey_{{ new_vm_id }}.pub
+   
                        
     - name: Write the Cloud-Init Network Script to a File
       ansible.builtin.copy:
         dest: /tmp/configure_network.sh
         content: |
           #!/bin/bash
-
-          # Check if Ip_address is defined
-          if [ -n "{{ ip_address | default('') }}" ]; then
-            # Use static IP configuration
-            qm set "{{ new_vm_id }}" --ipconfig0 "ip={{ ip_address }}/24,gw={{ gateway | default('') }}" --nameserver 10.0.90.202
-          else
-            # Use DHCP configuration
-            qm set "{{ new_vm_id }}" --ipconfig0 "ip=dhcp" --nameserver 10.0.90.202
-          fi          
+    
+          {% if ip_address | default('') %}
+          # Use static IP configuration
+          qm set "{{ new_vm_id }}" --ipconfig0 "ip={{ ip_address }}/24,gw={{ gateway | default('') }}" --nameserver 10.0.90.202
+          {% else %}
+          # Use DHCP configuration
+          qm set "{{ new_vm_id }}" --ipconfig0 "ip=dhcp" --nameserver 10.0.90.202
+          {% endif %}
         mode: '0755'
 
     - name: Execute the Cloud-Init Network Script
